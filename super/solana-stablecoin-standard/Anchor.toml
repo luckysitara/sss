@@ -1,0 +1,22 @@
+[toolchain]
+package_manager = "yarn"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+sss_3 = "CJCdamLHnTNb9GJvDVEYieWxpAJB6FoWhSBXZ3s82dMM"
+sss_1 = "8jBjnag7xWAnJkG5hFnjH7qZtwFp5ua57TjzwpHhhHpL"
+sss_2 = "3gam4baZf4JJFAZBQY7UEekJ7YgSL9GNDWYQrz1Qxe1T"
+sss_transfer_hook = "DJoWeytpBHbeXZHnLeT56YMTr71S9MEyiT2gZqf1YTv8"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "localnet"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "yarn run mocha -t 1000000 tests/"
