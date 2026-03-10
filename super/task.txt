@@ -1,0 +1,60 @@
+**Phase 1: Program Enhancements (SSS-1, SSS-2, SSS-3, SSS-4)**
+
+*   **SSS-1 (Fiat-backed):**
+    *   Implement `set_transfer_fee_config` and `set_transfer_fee_authority` instructions.
+*   **SSS-2 (Interest-Bearing / Collateral-Backed):**
+    *   Update the `initialize` function: accept `transfer_fee_basis_points`, `maximum_fee`, and `interest_rate_bps`. Add CPI calls to initialize both `TransferFeeConfig` and `InterestBearingConfig` extensions.
+    *   Implement `set_transfer_fee_config`, `set_transfer_fee_authority`, and `set_interest_rate` instructions.
+*   **SSS-3 (Confidential Stablecoin):**
+    *   Update `initialize` function: take `transfer_hook_program_id` as a parameter and set it in the `transfer_hook` extension (currently uses `system_program::ID` placeholder).
+*   **SSS-4 (Confidential + Stored Balance):**
+    *   Scaffold the `sss-4` program.
+    *   Implement `ConfidentialStablecoinV2` state.
+    *   Implement `initialize` (with Confidential Transfer, Metadata, Permanent Delegate, Transfer Hook, and `total_assets` tracking), `sync`, `mint_confidential`, `apply_pending_balance`, `transfer_confidential`, `pause`, `unpause`, `set_transfer_hook`.
+
+**Phase 2: Backend Service (ZK Proofs)**
+
+*   **`proofs-backend` (Rust):**
+    *   Create a new Rust project (`cargo new --bin proofs-backend`).
+    *   Implement a simple HTTP server (e.g., using Axum or Actix-web).
+    *   Expose an endpoint to generate `ProofContext` account data for confidential transfers using `spl-token-client`.
+
+**Phase 3: TypeScript SDK Updates**
+
+*   **`sdk/index.ts`:**
+    *   Update `initializeSss1` to accept `transfer_fee_basis_points` and `maximum_fee`.
+    *   Update `initializeSss2` to accept `transfer_fee_basis_points`, `maximum_fee`, and `interest_rate_bps`.
+    *   Add new SDK methods for SSS-1 and SSS-2: `setSss1TransferFeeConfig`, `setSss1TransferFeeAuthority`, `setSss2TransferFeeConfig`, `setSss2TransferFeeAuthority`, `setSss2InterestRate`.
+    *   Add all `SSS-4` SDK methods.
+    *   Add helper functions for interacting with the ZK Proof Backend for SSS-3 and SSS-4.
+
+**Phase 4: Admin CLI**
+
+*   **Admin CLI (TypeScript):**
+    *   Create a new TypeScript CLI project (`admin-cli`).
+    *   Implement commands for:
+        *   Deploying all SSS programs.
+        *   Initializing SSS-1, SSS-2, SSS-3, SSS-4.
+        *   Minting/Burning SSS-1.
+        *   Depositing/Redeeming/Syncing SSS-2.
+        *   Managing blacklist in `sss-transfer-hook`.
+        *   Confidential operations (minting, applying pending, transferring) for SSS-3 and SSS-4, integrating with the ZK Proof Backend.
+        *   Pausing/Unpausing SSS-1, SSS-2, SSS-3, SSS-4.
+        *   Setting transfer hook program IDs for all SSS programs.
+        *   Setting transfer fees and interest rates for SSS programs.
+
+**Phase 5: Testing**
+
+*   **`tests/test.ts`:**
+    *   Update tests to cover:
+        *   SSS-1 and SSS-2 with new transfer fee and interest-bearing configurations.
+        *   SSS-3 full functionality, including confidential minting/transfers (mocking `ProofContext` or using the backend).
+        *   SSS-4 full functionality.
+        *   Testing through the Admin CLI functions.
+
+**Phase 6: Documentation**
+
+*   **`README.md`:**
+    *   Update to reflect all new programs, the CLI, backend service, and features.
+*   **`ARCHITECTURE.md`:**
+    *   Create a detailed document explaining the design of all SSS programs, extensions, interactions, and backend services.

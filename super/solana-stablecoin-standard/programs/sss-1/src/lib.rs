@@ -150,39 +150,92 @@ pub mod sss_1 {
         ctx.accounts.stablecoin.paused = false;
         Ok(())
     }
+pub fn set_transfer_hook(ctx: Context<SetTransferHook>, new_transfer_hook_program_id: Pubkey) -> Result<()> {
+    let stablecoin = &ctx.accounts.stablecoin;
+    let mint_info = ctx.accounts.mint.to_account_info();
 
-    pub fn set_transfer_hook(ctx: Context<SetTransferHook>, new_transfer_hook_program_id: Pubkey) -> Result<()> {
-        let stablecoin = &ctx.accounts.stablecoin;
-        let mint_info = ctx.accounts.mint.to_account_info();
+    let stablecoin_key = stablecoin.key();
+    let seeds: &[&[&[u8]]] = &[&[
+        STABLECOIN_SEED,
+        stablecoin.mint.as_ref(),
+        &[stablecoin.bump],
+    ]];
+    let signer_seeds = &[&seeds[0][..]];
 
-        let stablecoin_key = stablecoin.key();
-        let seeds: &[&[&[u8]]] = &[&[
-            STABLECOIN_SEED,
-            stablecoin.mint.as_ref(),
-            &[stablecoin.bump],
-        ]];
-        let signer_seeds = &[&seeds[0][..]];
+    let cpi_accounts = ctx.accounts.token_program.to_account_info();
 
-        let cpi_accounts = ctx.accounts.token_program.to_account_info();
+    let set_transfer_hook_ix = spl_token_2022::instruction::set_transfer_hook(
+        &ctx.accounts.token_program.key(),
+        &mint_info.key(),
+        &stablecoin_key, // Authority
+        Some(new_transfer_hook_program_id),
+    )?;
 
-        let set_transfer_hook_ix = spl_token_2022::instruction::set_transfer_hook(
-            &ctx.accounts.token_program.key(),
-            &mint_info.key(),
-            &stablecoin_key, // Authority
-            Some(new_transfer_hook_program_id),
-        )?;
+    solana_program::program::invoke_signed(
+        &set_transfer_hook_ix,
+        &[
+            cpi_accounts.clone(),
+            mint_info.clone(),
+            ctx.accounts.stablecoin.to_account_info(), // Authority
+        ],
+        signer_seeds,
+    )?;
+    Ok(())
+}
 
-        solana_program::program::invoke_signed(
-            &set_transfer_hook_ix,
-            &[
-                cpi_accounts.clone(),
-                mint_info.clone(),
-                ctx.accounts.stablecoin.to_account_info(), // Authority
-            ],
-            signer_seeds,
-        )?;
-        Ok(())
-    }
+pub fn set_transfer_fee_config(
+    ctx: Context<SetTransferFeeConfig>,
+    transfer_fee_basis_points: u16,
+    maximum_fee: u64,
+) -> Result<()> {
+    let stablecoin = &ctx.accounts.stablecoin;
+    let mint_info = ctx.accounts.mint.to_account_info();
+
+    let stablecoin_key = stablecoin.key();
+    let seeds: &[&[&[u8]]] = &[&[
+        STABLECOIN_SEED,
+        stablecoin.mint.as_ref(),
+        &[stablecoin.bump],
+    ]];
+    let signer_seeds = &[&seeds[0][..]];
+
+    let set_fee_config_ix = spl_token_2022::instruction::transfer_fee::set_transfer_fee_config(
+        &ctx.accounts.token_program.key(),
+        &mint_info.key(),
+        Some(&stablecoin_key), // Fee authority
+        Some(&stablecoin_key), // Withheld authority
+        transfer_fee_basis_points,
+        maximum_fee,
+    )?;
+
+    solana_program::program::invoke_signed(
+        &set_fee_config_ix,
+        &[
+            mint_info.clone(),
+            ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.stablecoin.to_account_info(), // Fee authority
+        ],
+        signer_seeds,
+    )?;
+    Ok(())
+}
+}
+
+#[derive(Accounts)]
+pub struct SetTransferFeeConfig<'info> {
+pub authority: Signer<'info>,
+#[account(
+    seeds = [STABLECOIN_SEED, stablecoin.mint.as_ref()],
+    bump = stablecoin.bump,
+    has_one = authority
+)]
+pub stablecoin: Account<'info, Stablecoin>,
+
+#[account(mut, address = stablecoin.mint)]
+pub mint: InterfaceAccount<'info, Mint>,
+
+pub token_program: Program<'info, Token2022>,
+}
 #[derive(Accounts)]
 #[instruction(decimals: u8, name: String, symbol: String, uri: String, transfer_fee_basis_points: u16, maximum_fee: u64)]
 pub struct Initialize<'info> {

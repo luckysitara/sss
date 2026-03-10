@@ -7,6 +7,8 @@ use spl_token_2022::extension::{
     metadata_pointer::MetadataPointer,
     permanent_delegate::PermanentDelegate,
     transfer_hook::TransferHook,
+    transfer_fee::TransferFeeConfig, // New import
+    interest_bearing::InterestBearingConfig, // New import
 };
 use spl_token_metadata_interface::{
     state::TokenMetadata,
@@ -35,6 +37,9 @@ pub mod sss_2 {
         name: String,
         symbol: String,
         uri: String,
+        transfer_fee_basis_points: u16,
+        maximum_fee: u64,
+        interest_rate_bps: u16,
     ) -> Result<()> {
         let stablecoin = &mut ctx.accounts.stablecoin;
         stablecoin.authority = ctx.accounts.authority.key();
@@ -45,8 +50,6 @@ pub mod sss_2 {
         stablecoin.paused = false;
         stablecoin.bump = ctx.bumps.stablecoin;
 
-        stablecoin.bump = ctx.bumps.stablecoin;
-
         let stablecoin_key = stablecoin.key(); // The stablecoin PDA is the authority for the mint
         let seeds: &[&[&[u8]]] = &[&[
             STABLECOIN_SEED,
@@ -54,6 +57,42 @@ pub mod sss_2 {
             &[ctx.bumps.stablecoin],
         ]];
         let signer_seeds = &[&seeds[0][..]];
+
+        // Initialize Transfer Fee Config (Explicitly via CPI)
+        let transfer_fee_ix = spl_token_2022::instruction::initialize_transfer_fee_config(
+            &ctx.accounts.token_program.key(),
+            &ctx.accounts.mint.key(),
+            Some(&stablecoin_key),
+            Some(&stablecoin_key),
+            transfer_fee_basis_points,
+            maximum_fee,
+        )?;
+
+        solana_program::program::invoke_signed(
+            &transfer_fee_ix,
+            &[
+                ctx.accounts.mint.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+            ],
+            signer_seeds,
+        )?;
+
+        // Initialize Interest Bearing Config (Explicitly via CPI)
+        let interest_bearing_ix = spl_token_2022::instruction::interest_bearing::initialize_interest_bearing_mint(
+            &ctx.accounts.token_program.key(),
+            &ctx.accounts.mint.key(),
+            Some(&stablecoin_key),
+            interest_rate_bps,
+        )?;
+        
+        solana_program::program::invoke_signed(
+            &interest_bearing_ix,
+            &[
+                ctx.accounts.mint.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+            ],
+            signer_seeds,
+        )?;
 
         // Initialize metadata for the mint
         let cpi_accounts = ctx.accounts.token_metadata_program.to_account_info();
@@ -84,7 +123,7 @@ pub mod sss_2 {
             ],
             signer_seeds,
         )?;
-
+        Ok(())
     }
 
     pub fn sync(ctx: Context<Sync>) -> Result<()> {
@@ -254,7 +293,7 @@ pub mod sss_2 {
 }
 
 #[derive(Accounts)]
-#[instruction(decimals: u8, name: String, symbol: String, uri: String)]
+#[instruction(decimals: u8, name: String, symbol: String, uri: String, transfer_fee_basis_points: u16, maximum_fee: u64, interest_rate_bps: u16)]
 pub struct Initialize<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
@@ -279,6 +318,12 @@ pub struct Initialize<'info> {
         extensions::permanent_delegate::delegate = stablecoin, // Set stablecoin PDA as permanent delegate
         extensions::transfer_hook::authority = stablecoin, // Set stablecoin PDA as transfer hook authority
         extensions::transfer_hook::program_id = token_program, // Placeholder, will be set later
+        extensions::transfer_fee::basis_points = transfer_fee_basis_points,
+        extensions::transfer_fee::maximum_fee = maximum_fee,
+        extensions::transfer_fee::fee_authority = stablecoin, // The PDA is the fee authority
+        extensions::transfer_fee::withdraw_withheld_authority = stablecoin, // The PDA is the withdraw withheld authority
+        extensions::interest_bearing::rate = interest_rate_bps,
+        extensions::interest_bearing::authority = stablecoin,
     )]
     pub mint: InterfaceAccount<'info, Mint>,
 
