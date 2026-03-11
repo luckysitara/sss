@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "programs/*"
-]
+, "proofs-backend"]
 resolver = "2"
 
 [profile.release]

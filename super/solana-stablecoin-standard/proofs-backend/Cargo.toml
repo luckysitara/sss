@@ -1,0 +1,15 @@
+[package]
+name = "proofs-backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+solana-sdk = "1.18"
+spl-token-2022 = { version = "0.9", features = ["zk-ops"] }
+tower-http = { version = "0.5", features = ["cors"] }
+base64 = "0.21"
+

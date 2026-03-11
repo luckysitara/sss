@@ -16,7 +16,9 @@ import {
     getAssociatedTokenAddressSync,
     createAssociatedTokenAccountInstruction as createATA2022,
     createInitializeMintInstruction as createInitializeMintInstruction2022,
-    createInitializeConfidentialTransferInstruction, // New import
+    createInitializeConfidentialTransferInstruction,
+    createInitializeInterestBearingMintInstruction, // New import
+    createInitializeTransferFeeConfigInstruction, // New import
 } from "@solana/spl-token";
 import {
     createInitializeMetadataPointerInstruction,
@@ -24,10 +26,12 @@ import {
     createInitializeTransferHookInstruction,
     TOKEN_METADATA_PROGRAM_ID,
 } from "@solana/spl-token-metadata";
+import axios from "axios"; // For backend communication
 
 import { Sss1 } from "../target/types/sss_1";
 import { Sss2 } from "../target/types/sss_2";
-import { Sss3 } from "../target/types/sss_3"; // New import
+import { Sss3 } from "../target/types/sss_3";
+import { Sss4 } from "../target/types/sss_4"; // New import
 import { SssTransferHook } from "../target/types/sss_transfer_hook";
 
 export class SssSdk {
@@ -35,26 +39,32 @@ export class SssSdk {
     provider: anchor.AnchorProvider;
     sss1Program: Program<Sss1>;
     sss2Program: Program<Sss2>;
-    sss3Program: Program<Sss3>; // Add Sss3 program
+    sss3Program: Program<Sss3>;
+    sss4Program: Program<Sss4>; // New
     transferHookProgram: Program<SssTransferHook>;
     payer: Keypair;
+    backendUrl: string; // New
 
     constructor(
         connection: Connection,
         payer: Keypair,
         sss1ProgramId: PublicKey,
         sss2ProgramId: PublicKey,
-        sss3ProgramId: PublicKey, // Add Sss3 program ID
+        sss3ProgramId: PublicKey,
+        sss4ProgramId: PublicKey, // New
         transferHookProgramId: PublicKey,
+        backendUrl: string = "http://localhost:3000" // New
     ) {
         this.connection = connection;
         this.payer = payer;
+        this.backendUrl = backendUrl;
         this.provider = new anchor.AnchorProvider(connection, new anchor.Wallet(payer), {
             commitment: "confirmed",
         });
         this.sss1Program = new Program<Sss1>(require("../target/idl/sss_1.json"), sss1ProgramId, this.provider);
         this.sss2Program = new Program<Sss2>(require("../target/idl/sss_2.json"), sss2ProgramId, this.provider);
-        this.sss3Program = new Program<Sss3>(require("../target/idl/sss_3.json"), sss3ProgramId, this.provider); // Initialize Sss3 program
+        this.sss3Program = new Program<Sss3>(require("../target/idl/sss_3.json"), sss3ProgramId, this.provider);
+        this.sss4Program = new Program<Sss4>(require("../target/idl/sss_4.json"), sss4ProgramId, this.provider); // New
         this.transferHookProgram = new Program<SssTransferHook>(
             require("../target/idl/sss_transfer_hook.json"),
             transferHookProgramId,
@@ -68,6 +78,8 @@ export class SssSdk {
         name: string,
         symbol: string,
         uri: string,
+        transferFeeBasisPoints: number,
+        maximumFee: number,
         mintKeypair?: Keypair,
     ): Promise<{ stablecoinPda: PublicKey; mint: PublicKey; tx: string }> {
         const mint = mintKeypair || Keypair.generate();
@@ -81,6 +93,7 @@ export class SssSdk {
             ExtensionType.MetadataPointer,
             ExtensionType.PermanentDelegate,
             ExtensionType.TransferHook,
+            ExtensionType.TransferFeeConfig,
         ];
         const mintLen = getMintLen(extensions);
         const lamports = await this.connection.getMinimumBalanceForRentExemption(mintLen);
@@ -117,12 +130,24 @@ export class SssSdk {
             )
         );
 
-        // Initialize Transfer Hook Extension (with a placeholder program ID for now)
+        // Initialize Transfer Hook Extension
         transaction.add(
             createInitializeTransferHookInstruction(
                 mint.publicKey,
                 stablecoinPda, // Authority
-                this.transferHookProgram.programId, // Placeholder program ID
+                this.transferHookProgram.programId, 
+                TOKEN_2022_PROGRAM_ID
+            )
+        );
+
+        // Initialize Transfer Fee Extension
+        transaction.add(
+            createInitializeTransferFeeConfigInstruction(
+                mint.publicKey,
+                stablecoinPda, // Fee authority
+                stablecoinPda, // Withdraw withheld authority
+                transferFeeBasisPoints,
+                new anchor.BN(maximumFee),
                 TOKEN_2022_PROGRAM_ID
             )
         );
@@ -134,13 +159,13 @@ export class SssSdk {
                 decimals,
                 stablecoinPda, // Mint Authority (PDA)
                 stablecoinPda, // Freeze Authority (PDA)
-                TOKEN_22_PROGRAM_ID
+                TOKEN_2022_PROGRAM_ID
             )
         );
         
         // Initialize Metadata itself (spl-token-metadata program)
         const metadataInstruction = await this.sss1Program.methods
-            .initialize(decimals, name, symbol, uri)
+            .initialize(decimals, name, symbol, uri, transferFeeBasisPoints, new anchor.BN(maximumFee))
             .accounts({
                 authority: this.payer.publicKey,
                 stablecoin: stablecoinPda,
@@ -242,6 +267,9 @@ export class SssSdk {
         symbol: string,
         uri: string,
         collateralMint: PublicKey,
+        transferFeeBasisPoints: number,
+        maximumFee: number,
+        interestRateBps: number,
         mintKeypair?: Keypair,
     ): Promise<{ stablecoinPda: PublicKey; mint: PublicKey; collateralVault: PublicKey; tx: string }> {
         const mint = mintKeypair || Keypair.generate();
@@ -257,6 +285,8 @@ export class SssSdk {
             ExtensionType.MetadataPointer,
             ExtensionType.PermanentDelegate,
             ExtensionType.TransferHook,
+            ExtensionType.TransferFeeConfig,
+            ExtensionType.InterestBearingConfig,
         ];
         const mintLen = getMintLen(extensions);
         const lamports = await this.connection.getMinimumBalanceForRentExemption(mintLen);
@@ -293,12 +323,34 @@ export class SssSdk {
             )
         );
 
-        // Initialize Transfer Hook Extension (with a placeholder program ID for now)
+        // Initialize Transfer Hook Extension
         transaction.add(
             createInitializeTransferHookInstruction(
                 mint.publicKey,
                 stablecoinPda, // Authority
-                this.transferHookProgram.programId, // Placeholder program ID
+                this.transferHookProgram.programId,
+                TOKEN_2022_PROGRAM_ID
+            )
+        );
+
+        // Initialize Transfer Fee Extension
+        transaction.add(
+            createInitializeTransferFeeConfigInstruction(
+                mint.publicKey,
+                stablecoinPda, // Fee authority
+                stablecoinPda, // Withdraw withheld authority
+                transferFeeBasisPoints,
+                new anchor.BN(maximumFee),
+                TOKEN_2022_PROGRAM_ID
+            )
+        );
+
+        // Initialize Interest Bearing Extension
+        transaction.add(
+            createInitializeInterestBearingMintInstruction(
+                mint.publicKey,
+                stablecoinPda, // Rate authority
+                interestRateBps,
                 TOKEN_2022_PROGRAM_ID
             )
         );
@@ -316,7 +368,7 @@ export class SssSdk {
 
         // Initialize Metadata and SSS-2 state
         const initializeInstruction = await this.sss2Program.methods
-            .initialize(decimals, name, symbol, uri, collateralMint)
+            .initialize(decimals, name, symbol, uri, transferFeeBasisPoints, new anchor.BN(maximumFee), interestRateBps)
             .accounts({
                 authority: this.payer.publicKey,
                 stablecoin: stablecoinPda,
@@ -648,6 +700,325 @@ export class SssSdk {
         newTransferHookProgramId: PublicKey
     ): Promise<string> {
         return await this.sss3Program.methods
+            .setTransferHook(newTransferHookProgramId)
+            .accounts({
+                authority: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+                mint: mint,
+                tokenProgram: TOKEN_2022_PROGRAM_ID,
+            })
+            .signers([this.payer])
+            .rpc();
+    }
+
+    // --- SSS-4 Functions ---
+    async initializeSss4(
+        decimals: number,
+        name: string,
+        symbol: string,
+        uri: string,
+        collateralMint: PublicKey,
+        transferHookProgramId: PublicKey,
+        mintKeypair?: Keypair,
+    ): Promise<{ stablecoinPda: PublicKey; mint: PublicKey; collateralVault: PublicKey; tx: string }> {
+        const mint = mintKeypair || Keypair.generate();
+
+        const [stablecoinPda] = PublicKey.findProgramAddressSync(
+            [Buffer.from("confidential_stablecoin_v2"), mint.publicKey.toBuffer()],
+            this.sss4Program.programId
+        );
+
+        const collateralVault = getAssociatedTokenAddressSync(collateralMint, stablecoinPda, true, TOKEN_2022_PROGRAM_ID);
+
+        const extensions = [
+            ExtensionType.ConfidentialTransfer,
+            ExtensionType.MetadataPointer,
+            ExtensionType.PermanentDelegate,
+            ExtensionType.TransferHook,
+        ];
+        const mintLen = getMintLen(extensions);
+        const lamports = await this.connection.getMinimumBalanceForRentExemption(mintLen);
+
+        const transaction = new anchor.web3.Transaction();
+
+        transaction.add(
+            SystemProgram.createAccount({
+                fromPubkey: this.payer.publicKey,
+                newAccountPubkey: mint.publicKey,
+                space: mintLen,
+                lamports,
+                programId: TOKEN_2022_PROGRAM_ID,
+            })
+        );
+
+        transaction.add(
+            createInitializeMetadataPointerInstruction(
+                mint.publicKey,
+                stablecoinPda,
+                mint.publicKey,
+                TOKEN_2022_PROGRAM_ID
+            )
+        );
+
+        transaction.add(
+            createInitializePermanentDelegateInstruction(
+                mint.publicKey,
+                stablecoinPda,
+                TOKEN_2022_PROGRAM_ID
+            )
+        );
+
+        transaction.add(
+            createInitializeTransferHookInstruction(
+                mint.publicKey,
+                stablecoinPda,
+                transferHookProgramId,
+                TOKEN_2022_PROGRAM_ID
+            )
+        );
+
+        transaction.add(
+            createInitializeConfidentialTransferInstruction(
+                mint.publicKey,
+                stablecoinPda,
+                false,
+                0,
+                0,
+                TOKEN_2022_PROGRAM_ID
+            )
+        );
+
+        transaction.add(
+            createInitializeMintInstruction2022(
+                mint.publicKey,
+                decimals,
+                stablecoinPda,
+                stablecoinPda,
+                TOKEN_2022_PROGRAM_ID
+            )
+        );
+
+        const initializeInstruction = await this.sss4Program.methods
+            .initialize(decimals, name, symbol, uri, transferHookProgramId)
+            .accounts({
+                authority: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+                mint: mint.publicKey,
+                collateralVault: collateralVault,
+                collateralMint: collateralMint,
+                tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
+                tokenProgram: TOKEN_2022_PROGRAM_ID,
+                associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+                systemProgram: SystemProgram.programId,
+                rent: SYSVAR_RENT_PUBKEY,
+            })
+            .instruction();
+        transaction.add(initializeInstruction);
+
+        const tx = await this.provider.sendAndConfirm(transaction, [this.payer, mint]);
+
+        return { stablecoinPda, mint: mint.publicKey, collateralVault, tx };
+    }
+
+    async syncSss4(stablecoinPda: PublicKey, collateralVault: PublicKey): Promise<string> {
+        return await this.sss4Program.methods
+            .sync()
+            .accounts({
+                authority: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+                collateralVault: collateralVault,
+            })
+            .signers([this.payer])
+            .rpc();
+    }
+
+    async mintConfidentialSss4(
+        stablecoinPda: PublicKey,
+        mint: PublicKey,
+        destinationAccount: PublicKey,
+        amount: number,
+        proofContext: PublicKey,
+    ): Promise<string> {
+        return await this.sss4Program.methods
+            .mintConfidential(new anchor.BN(amount), proofContext)
+            .accounts({
+                authority: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+                mint: mint,
+                destinationAccount: destinationAccount,
+                tokenProgram: TOKEN_2022_PROGRAM_ID,
+            })
+            .signers([this.payer])
+            .rpc();
+    }
+
+    async transferConfidentialSss4(
+        stablecoinPda: PublicKey,
+        mint: PublicKey,
+        sourceAccount: PublicKey,
+        destinationAccount: PublicKey,
+        proofContext: PublicKey,
+    ): Promise<string> {
+        return await this.sss4Program.methods
+            .transferConfidential(proofContext)
+            .accounts({
+                owner: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+                mint: mint,
+                sourceAccount: sourceAccount,
+                destinationAccount: destinationAccount,
+                tokenProgram: TOKEN_2022_PROGRAM_ID,
+            })
+            .signers([this.payer])
+            .rpc();
+    }
+
+    // --- Backend Helpers ---
+    async getTransferProof(
+        sourcePubkey: PublicKey,
+        destinationPubkey: PublicKey,
+        amount: number,
+        decryptKey: string,
+    ): Promise<Buffer> {
+        const response = await axios.post(`${this.backendUrl}/generate-transfer-proof`, {
+            source_pubkey: sourcePubkey.toBase58(),
+            destination_pubkey: destinationPubkey.toBase58(),
+            amount,
+            decrypt_key: decryptKey,
+        });
+        return Buffer.from(response.data.proof_data, "base64");
+    }
+
+    // --- SSS-1 & SSS-2 Admin Setters ---
+    async setSss1TransferFeeConfig(
+        stablecoinPda: PublicKey,
+        mint: PublicKey,
+        basisPoints: number,
+        maximumFee: number
+    ): Promise<string> {
+        return await this.sss1Program.methods
+            .setTransferFeeConfig(basisPoints, new anchor.BN(maximumFee))
+            .accounts({
+                authority: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+                mint: mint,
+                tokenProgram: TOKEN_2022_PROGRAM_ID,
+            })
+            .rpc();
+    }
+
+    async setSss1TransferFeeAuthority(
+        stablecoinPda: PublicKey,
+        mint: PublicKey,
+        newFeeAuthority: PublicKey | null,
+        newWithdrawWithheldAuthority: PublicKey | null
+    ): Promise<string> {
+        return await this.sss1Program.methods
+            .setTransferFeeAuthority(newFeeAuthority, newWithdrawWithheldAuthority)
+            .accounts({
+                authority: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+                mint: mint,
+                tokenProgram: TOKEN_2022_PROGRAM_ID,
+            })
+            .rpc();
+    }
+
+    async setSss2TransferFeeConfig(
+        stablecoinPda: PublicKey,
+        mint: PublicKey,
+        basisPoints: number,
+        maximumFee: number
+    ): Promise<string> {
+        return await this.sss2Program.methods
+            .setTransferFeeConfig(basisPoints, new anchor.BN(maximumFee))
+            .accounts({
+                authority: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+                mint: mint,
+                tokenProgram: TOKEN_2022_PROGRAM_ID,
+            })
+            .rpc();
+    }
+
+    async setSss2TransferFeeAuthority(
+        stablecoinPda: PublicKey,
+        mint: PublicKey,
+        newFeeAuthority: PublicKey | null,
+        newWithdrawWithheldAuthority: PublicKey | null
+    ): Promise<string> {
+        return await this.sss2Program.methods
+            .setTransferFeeAuthority(newFeeAuthority, newWithdrawWithheldAuthority)
+            .accounts({
+                authority: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+                mint: mint,
+                tokenProgram: TOKEN_2022_PROGRAM_ID,
+            })
+            .rpc();
+    }
+
+    async setSss2InterestRate(
+        stablecoinPda: PublicKey,
+        mint: PublicKey,
+        newRateBps: number
+    ): Promise<string> {
+        return await this.sss2Program.methods
+            .setInterestRate(newRateBps)
+            .accounts({
+                authority: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+                mint: mint,
+                tokenProgram: TOKEN_2022_PROGRAM_ID,
+            })
+            .rpc();
+    }
+
+    // --- SSS-4 Missing Methods ---
+    async applyPendingBalanceSss4(
+        stablecoinPda: PublicKey,
+        tokenAccount: PublicKey,
+    ): Promise<string> {
+        return await this.sss4Program.methods
+            .applyPendingBalance()
+            .accounts({
+                owner: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+                account: tokenAccount,
+                tokenProgram: TOKEN_2022_PROGRAM_ID,
+            })
+            .signers([this.payer])
+            .rpc();
+    }
+
+    async pauseSss4(stablecoinPda: PublicKey): Promise<string> {
+        return await this.sss4Program.methods
+            .pause()
+            .accounts({
+                authority: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+            })
+            .signers([this.payer])
+            .rpc();
+    }
+
+    async unpauseSss4(stablecoinPda: PublicKey): Promise<string> {
+        return await this.sss4Program.methods
+            .unpause()
+            .accounts({
+                authority: this.payer.publicKey,
+                stablecoin: stablecoinPda,
+            })
+            .signers([this.payer])
+            .rpc();
+    }
+
+    async setSss4TransferHook(
+        stablecoinPda: PublicKey,
+        mint: PublicKey,
+        newTransferHookProgramId: PublicKey
+    ): Promise<string> {
+        return await this.sss4Program.methods
             .setTransferHook(newTransferHookProgramId)
             .accounts({
                 authority: this.payer.publicKey,

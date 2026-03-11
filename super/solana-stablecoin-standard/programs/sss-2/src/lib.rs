@@ -290,6 +290,146 @@ pub mod sss_2 {
         )?;
         Ok(())
     }
+
+    pub fn set_transfer_fee_config(
+        ctx: Context<SetTransferFeeConfig>,
+        transfer_fee_basis_points: u16,
+        maximum_fee: u64,
+    ) -> Result<()> {
+        let stablecoin = &ctx.accounts.stablecoin;
+        let mint_info = ctx.accounts.mint.to_account_info();
+
+        let stablecoin_key = stablecoin.key();
+        let seeds: &[&[&[u8]]] = &[&[
+            STABLECOIN_SEED,
+            stablecoin.mint.as_ref(),
+            &[stablecoin.bump],
+        ]];
+        let signer_seeds = &[&seeds[0][..]];
+
+        let set_fee_config_ix = spl_token_2022::instruction::transfer_fee::set_transfer_fee_config(
+            &ctx.accounts.token_program.key(),
+            &mint_info.key(),
+            Some(&stablecoin_key), // Fee authority
+            Some(&stablecoin_key), // Withheld authority
+            transfer_fee_basis_points,
+            maximum_fee,
+        )?;
+
+        solana_program::program::invoke_signed(
+            &set_fee_config_ix,
+            &[
+                mint_info.clone(),
+                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.stablecoin.to_account_info(), // Fee authority
+            ],
+            signer_seeds,
+        )?;
+        Ok(())
+    }
+
+    pub fn set_transfer_fee_authority(
+        ctx: Context<SetTransferFeeConfig>,
+        new_fee_authority: Option<Pubkey>,
+        new_withdraw_withheld_authority: Option<Pubkey>,
+    ) -> Result<()> {
+        let stablecoin = &ctx.accounts.stablecoin;
+        let mint_info = ctx.accounts.mint.to_account_info();
+
+        let stablecoin_key = stablecoin.key();
+        let seeds: &[&[&[u8]]] = &[&[
+            STABLECOIN_SEED,
+            stablecoin.mint.as_ref(),
+            &[stablecoin.bump],
+        ]];
+        let signer_seeds = &[&seeds[0][..]];
+
+        let set_fee_auth_ix = spl_token_2022::instruction::transfer_fee::set_transfer_fee_authority(
+            &ctx.accounts.token_program.key(),
+            &mint_info.key(),
+            Some(&stablecoin_key), // Current authority
+            new_fee_authority.as_ref(),
+            new_withdraw_withheld_authority.as_ref(),
+        )?;
+
+        solana_program::program::invoke_signed(
+            &set_fee_auth_ix,
+            &[
+                mint_info.clone(),
+                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.stablecoin.to_account_info(), // Authority
+            ],
+            signer_seeds,
+        )?;
+        Ok(())
+    }
+
+    pub fn set_interest_rate(
+        ctx: Context<SetInterestRate>,
+        new_interest_rate_bps: i16,
+    ) -> Result<()> {
+        let stablecoin = &ctx.accounts.stablecoin;
+        let mint_info = ctx.accounts.mint.to_account_info();
+
+        let stablecoin_key = stablecoin.key();
+        let seeds: &[&[&[u8]]] = &[&[
+            STABLECOIN_SEED,
+            stablecoin.mint.as_ref(),
+            &[stablecoin.bump],
+        ]];
+        let signer_seeds = &[&seeds[0][..]];
+
+        let set_interest_rate_ix = spl_token_2022::instruction::interest_bearing::update_interest_bearing_mint_rate(
+            &ctx.accounts.token_program.key(),
+            &mint_info.key(),
+            &stablecoin_key, // Authority
+            &[], // Additional signers
+            new_interest_rate_bps,
+        )?;
+
+        solana_program::program::invoke_signed(
+            &set_interest_rate_ix,
+            &[
+                mint_info.clone(),
+                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.stablecoin.to_account_info(), // Authority
+            ],
+            signer_seeds,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Accounts)]
+pub struct SetInterestRate<'info> {
+    pub authority: Signer<'info>,
+    #[account(
+        seeds = [STABLECOIN_SEED, stablecoin.mint.as_ref()],
+        bump = stablecoin.bump,
+        has_one = authority
+    )]
+    pub stablecoin: Account<'info, StablecoinV2>,
+
+    #[account(mut, address = stablecoin.mint)]
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    pub token_program: Program<'info, Token2022>,
+}
+
+#[derive(Accounts)]
+pub struct SetTransferFeeConfig<'info> {
+    pub authority: Signer<'info>,
+    #[account(
+        seeds = [STABLECOIN_SEED, stablecoin.mint.as_ref()],
+        bump = stablecoin.bump,
+        has_one = authority
+    )]
+    pub stablecoin: Account<'info, StablecoinV2>,
+
+    #[account(mut, address = stablecoin.mint)]
+    pub mint: InterfaceAccount<'info, Mint>,
+
+    pub token_program: Program<'info, Token2022>,
 }
 
 #[derive(Accounts)]
